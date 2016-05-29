@@ -40,7 +40,7 @@ namespace Leceister
 
         public override void Run()
         {
-            SetColors(Color.RoyalBlue, Color.RoyalBlue, Color.Goldenrod, Color.White, Color.Yellow);
+            SetColors(Color.RoyalBlue, Color.RoyalBlue, Color.DarkGoldenrod, Color.Yellow, Color.LightGoldenrodYellow);
 
             IsAdjustGunForRobotTurn = true;
             IsAdjustRadarForGunTurn = true;
@@ -538,6 +538,22 @@ namespace Leceister
                     break;
                 }
             }
+        }
+
+        public override void OnPaint(IGraphics g)
+        {
+            var danger = GetMostDangerousWave();
+
+            var pen1 = new Pen(Color.Green);
+            var pen2 = new Pen(Color.Red);
+            //draw waves
+            foreach (var ew in enemyBullets)
+            {
+                var dist = ew.GetTraveledDistance(Time);
+                var pen = ew.Equals(danger) ? pen2 : pen1;
+                g.DrawEllipse(pen, (float)ew.StartX, (float)ew.StartY, (float)dist, (float)dist);
+            }
+
         }
     }
 }
