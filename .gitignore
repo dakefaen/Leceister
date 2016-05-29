@@ -3,3 +3,6 @@
 ################################################################################
 
 /.vs/Leceister/v14
+/Leceister/bin/Debug
+/Leceister/obj/Debug
+*.user

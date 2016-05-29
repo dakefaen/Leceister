@@ -9,19 +9,19 @@ namespace Leceister
 {
     public class BlueFox : AdvancedRobot
     {
-        const double radarLockFactor = 2.0;
+        private const float WallStick = 150;
+        private const double radarLockFactor = 2.0;
+        private const int StatsCount = 19;
 
         private double randomAhead = 50;
         private double randomTurn = 90;
         private int randomDirection = 1;
         private Random rnd = null;
-        private bool loseRadar = true;
 
-        private int radarCount = 0;
+        private int _radarCount = 0;
 
-        private RectangleF innerField;
-        private const float WallStick = 150;
-        private float radius;
+        private RectangleF _innerField;
+        private float _radius;
 
         private List<BulletWave> enemyBullets = new List<BulletWave>();
         private List<int> _surfDirections = new List<int>();
@@ -30,15 +30,13 @@ namespace Leceister
         private List<BulletWave> myBullets = new List<BulletWave>();
         private List<BulletWave> virtualBullets = new List<BulletWave>();
 
-        const int StatsCount = 19;
         public double[] _surfStats = new double[StatsCount];
         public int[] _fireStats = new int[StatsCount];
 
         private PointF _lastEnemyLocation;  // enemy bot's location
         private double _lastEnemyEnergy = 100d;
 
-        private PointF _sittingDuck = new PointF(0, 0);
-        private PointF _lastHitEnemyPoint = new PointF(0, 0);
+        //        private PointF _lastHitEnemyPoint = new PointF(0, 0);
 
         public override void Run()
         {
@@ -47,8 +45,8 @@ namespace Leceister
             IsAdjustGunForRobotTurn = true;
             IsAdjustRadarForGunTurn = true;
 
-            radius = (float)(Math.Max(Width, Height) / 1.41421);
-            innerField = new RectangleF(radius, radius, (float)BattleFieldWidth - 2 * radius, (float)BattleFieldHeight - 2 * radius);
+            _radius = (float)(Math.Max(Width, Height) / 1.41421);
+            _innerField = new RectangleF(_radius, _radius, (float)BattleFieldWidth - 2 * _radius, (float)BattleFieldHeight - 2 * _radius);
 
             //initial radar scan
             SetTurnRadarRight(double.MaxValue);
@@ -59,25 +57,23 @@ namespace Leceister
 
             while (true)
             {
-                //                Out.WriteLine("!execute at round {0}", Time);
-
                 Scan();
 
-                if (radarCount == 0)
+                if (_radarCount == 0)
                 {
-                    Out.WriteLine("lose radar at round {0}", Time);
+                    //                    Out.WriteLine("lose radar at round {0}", Time);
                     WalkWhenLoseRadar();
                 }
                 else
                 {
-                    radarCount--;
+                    _radarCount--;
                 }
 
                 Execute();
-                //                Out.WriteLine("execute finished at round {0}", Time);
             }
         }
 
+        //todo: run away
         private void WalkWhenLoseRadar()
         {
             randomDirection = Math.Sign(rnd.Next(-1, 1));
@@ -95,10 +91,7 @@ namespace Leceister
 
         public override void OnScannedRobot(ScannedRobotEvent e)
         {
-            //            Out.WriteLine("found enemy at round {0}", Time);
-
-            radarCount++;
-            //loseRadar = false;
+            _radarCount++;
 
             //lock radar
             double radarTurn = Utils.NormalRelativeAngleDegrees(Heading + e.Bearing - RadarHeading);
@@ -154,7 +147,7 @@ namespace Leceister
             _surfAbsBearings.Insert(0, absBearing + Math.PI);
 
             double energyDrop = _lastEnemyEnergy - e.Energy;
-            if (energyDrop < 3.01 && energyDrop > 0.09 && _surfDirections.Count > 2)
+            if (energyDrop <= Rules.MAX_BULLET_POWER && energyDrop >= Rules.MIN_BULLET_POWER && _surfDirections.Count > 2)
             {
                 BulletWave ew = new BulletWave()
                 {
@@ -176,7 +169,7 @@ namespace Leceister
                 var ew1 = enemyBullets[i];
                 var traveledDistance = ew1.GetTraveledDistance(Time);
                 var curDistance = Helper.GetDistance(ew1.StartX, ew1.StartY, X, Y);
-                if (traveledDistance > curDistance + 2 * radius)
+                if (traveledDistance > curDistance + 2 * _radius)
                 {
                     enemyBullets.RemoveAt(i);
                     i--;
@@ -232,6 +225,7 @@ namespace Leceister
                 StartX = X,
                 StartY = Y,
                 FireTime = Time,
+                Power = power,
                 TargetAngle = absBearing,
                 TargetDirection = enemyDirection,
                 Stats = currentStats
@@ -240,17 +234,17 @@ namespace Leceister
             double angleOffset = enemyDirection * newWave.MaxEscapeAngleRadian * GetGuessfactor();
 
             //handle easy case
-            if (Math.Abs(ex - _lastHitEnemyPoint.X) < Rules.MAX_VELOCITY && Math.Abs(ey - _lastHitEnemyPoint.Y) < Rules.MAX_VELOCITY)
+            if (e.Energy < 0.1)
             {
                 angleOffset = 0;
-                power = 3;
+                power = Math.Min(3, 0.5 * Energy);
             }
 
             double gunAdjust = Utils.NormalRelativeAngle(absBearing - GunHeadingRadians + angleOffset);
             SetTurnGunRightRadians(gunAdjust);
 
             Bullet fireBullet = null;
-            if (GunHeat <= 0 && gunAdjust < Math.Atan2(9, e.Distance))
+            if (GunHeat <= 0 && gunAdjust < Math.Atan2(0.5 * _radius, e.Distance))
             {
                 fireBullet = SetFireBullet(power);
                 if (fireBullet != null)
@@ -267,13 +261,12 @@ namespace Leceister
                 newWave.Power = power;
                 newWave.Angle = absBearing;
             }
-
         }
 
         private double GetGuessfactor()
         {
-            int bestindex = 15; // initialize it to be in the middle, guessfactor 0.
-            for (int i = 0; i < 31; i++)
+            int bestindex = (StatsCount + 1) / 2; // initialize it to be in the middle, guessfactor 0.
+            for (int i = 0; i < StatsCount; i++)
                 if (_fireStats[bestindex] < _fireStats[i])
                     bestindex = i;
 
@@ -288,18 +281,22 @@ namespace Leceister
 
         private double GetBulletPower(ScannedRobotEvent e)
         {
-            if (e.Distance <= 4 * radius)
+            if (e.Distance <= 3 * _radius)
                 return 3d;
-            if (e.Distance <= 8 * radius)
+            if (e.Distance <= 6 * _radius)
                 return 1d;
             return 0.1d;
         }
 
         private void DoSurfing()
         {
-            BulletWave surfWave = GetClosestSurfableWave();
+            BulletWave surfWave = GetMostDangerousWave();
 
-            if (surfWave == null) return;
+            if (surfWave == null)
+            {
+                //todo: do random walk
+                return;
+            }
 
             double dangerLeft = CheckDanger(surfWave, -1);
             double dangerRight = CheckDanger(surfWave, 1);
@@ -317,7 +314,8 @@ namespace Leceister
             SetBackAsFront(goAngle);
         }
 
-        private BulletWave GetClosestSurfableWave()
+        //todo: get most dangerous wave
+        private BulletWave GetMostDangerousWave()
         {
             double closestDistance = double.MaxValue;
             BulletWave surfWave = null;
@@ -452,7 +450,7 @@ namespace Leceister
 
         private double WallSmoothing(double curX, double curY, double angleInRadian, int offsetTurn)
         {
-            while (!innerField.Contains(Helper.Project(curX, curY, angleInRadian, WallStick)))
+            while (!_innerField.Contains(Helper.Project(curX, curY, angleInRadian, WallStick)))
             {
                 angleInRadian += offsetTurn * 0.1;
             }
@@ -469,24 +467,22 @@ namespace Leceister
         {
             // If the _enemyWaves collection is empty, we must have missed the
             // detection of this wave somehow.
-            if (enemyBullets.Any())
-            {
-                BulletWave hitWave = null;
-                foreach (var ew in enemyBullets)
-                {
-                    if (Math.Abs(ew.GetTraveledDistance(Time) - Helper.GetDistance(X, Y, ew.StartX, ew.StartY)) <= radius &&
-                        Math.Abs(Helper.GetBulletVelocity(e.Bullet.Power) - ew.Velocity) < 0.001)
-                    {
-                        hitWave = ew;
-                        break;
-                    }
-                }
 
-                if (hitWave != null)
+            BulletWave hitWave = null;
+            foreach (var ew in enemyBullets)
+            {
+                if (Math.Abs(ew.GetTraveledDistance(Time) - Helper.GetDistance(X, Y, ew.StartX, ew.StartY)) <= _radius &&
+                    Math.Abs(Helper.GetBulletVelocity(e.Bullet.Power) - ew.Velocity) < 0.001)
                 {
-                    LogHit(hitWave, e.Bullet.X, e.Bullet.Y);
-                    enemyBullets.Remove(hitWave);
+                    hitWave = ew;
+                    break;
                 }
+            }
+
+            if (hitWave != null)
+            {
+                LogHit(hitWave, e.Bullet.X, e.Bullet.Y);
+                enemyBullets.Remove(hitWave);
             }
         }
 
@@ -501,7 +497,7 @@ namespace Leceister
 
             foreach (var bullet in myBullets)
             {
-                if (Math.Abs(bullet.GetTraveledDistance(Time) - Helper.GetDistance(e.Bullet.X, e.Bullet.Y, bullet.StartX, bullet.StartY)) <= radius &&
+                if (Math.Abs(bullet.GetTraveledDistance(Time) - Helper.GetDistance(e.Bullet.X, e.Bullet.Y, bullet.StartX, bullet.StartY)) <= _radius &&
                     Math.Abs(e.Bullet.Power - bullet.Power) < 0.001 && Math.Abs(e.Bullet.HeadingRadians - bullet.Angle) < 0.001)
                 {
                     bullet.CheckHit(e.Bullet.X, e.Bullet.Y, Time); //maybe add more weight
@@ -510,7 +506,6 @@ namespace Leceister
                 }
             }
 
-            _lastHitEnemyPoint = new PointF((float)e.Bullet.X, (float)e.Bullet.Y);
         }
 
         public override void OnBulletHitBullet(BulletHitBulletEvent e)
@@ -539,15 +534,10 @@ namespace Leceister
                     Math.Abs(e.HitBullet.Power - bullet.Power) < 0.001 && Math.Abs(e.Bullet.HeadingRadians - bullet.Angle) < 0.001)
                 {
                     bullet.CheckHit(e.HitBullet.X, e.HitBullet.Y, Time); //maybe add more weight
-                    Out.WriteLine("angle: {0}, bearing: {1}", bullet.Angle, bullet.TargetAngle);
+                                                                         //                    Out.WriteLine("angle: {0}, bearing: {1}", bullet.Angle, bullet.TargetAngle);
                     break;
                 }
             }
-        }
-
-        public override void OnBulletMissed(BulletMissedEvent evnt)
-        {
-            _lastHitEnemyPoint = new PointF(0, 0);
         }
     }
 }
