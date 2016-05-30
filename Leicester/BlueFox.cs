@@ -1,19 +1,17 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq;
 using Robocode;
 using Robocode.Util;
 
-namespace Leceister
+namespace Leicester
 {
     public class BlueFox : AdvancedRobot
     {
-        private const float WallStick = 150;
+        private const float WallStick = 160;
         private const double radarLockFactor = 2.0;
-        private const int StatsCount = 19;
+        private const int StatsCount = 33;
 
-        private double randomAhead = 50;
         private double randomTurn = 90;
         private int randomDirection = 1;
         private Random rnd = null;
@@ -33,9 +31,11 @@ namespace Leceister
         public double[] _surfStats = new double[StatsCount];
         public int[] _fireStats = new int[StatsCount];
 
-        private PointF _lastEnemyLocation;  // enemy bot's location
+        private PointF _lastEnemyLocation;
         private double _lastEnemyEnergy = 100d;
+//        private double _enemyGunHeat = 0;
 
+        private PointF _predictPoint = new PointF(0, 0);
         //        private PointF _lastHitEnemyPoint = new PointF(0, 0);
 
         public override void Run()
@@ -58,17 +58,14 @@ namespace Leceister
             while (true)
             {
                 Scan();
-
                 if (_radarCount == 0)
                 {
-                    //                    Out.WriteLine("lose radar at round {0}", Time);
                     WalkWhenLoseRadar();
                 }
                 else
                 {
                     _radarCount--;
                 }
-
                 Execute();
             }
         }
@@ -84,18 +81,13 @@ namespace Leceister
             SetTurnRadarRight(double.MaxValue);
         }
 
-        public override void OnStatus(StatusEvent e)
-        {
-            //            Out.WriteLine("on round {0}", Time);
-        }
-
         public override void OnScannedRobot(ScannedRobotEvent e)
         {
             _radarCount++;
 
             //lock radar
-            double radarTurn = Utils.NormalRelativeAngleDegrees(Heading + e.Bearing - RadarHeading);
-            SetTurnRadarRight(radarTurn * radarLockFactor);
+            double radarTurn = Utils.NormalRelativeAngle(HeadingRadians + e.BearingRadians - RadarHeadingRadians);
+            SetTurnRadarRightRadians(radarTurn * radarLockFactor);
 
             #region old
             //var p = GetBulletPower();
@@ -147,7 +139,7 @@ namespace Leceister
             _surfAbsBearings.Insert(0, absBearing + Math.PI);
 
             double energyDrop = _lastEnemyEnergy - e.Energy;
-            if (energyDrop <= Rules.MAX_BULLET_POWER && energyDrop >= Rules.MIN_BULLET_POWER && _surfDirections.Count > 2)
+            if (energyDrop < Rules.MAX_BULLET_POWER + 0.0001 && energyDrop > Rules.MIN_BULLET_POWER - 0.0001 && _surfDirections.Count > 2)
             {
                 BulletWave ew = new BulletWave()
                 {
@@ -161,29 +153,27 @@ namespace Leceister
                 enemyBullets.Add(ew);
             }
             _lastEnemyEnergy = e.Energy;
-            _lastEnemyLocation = Helper.Project(X, Y, absBearing, e.Distance);
+            _lastEnemyLocation = Helper.GetProjection(X, Y, absBearing, e.Distance);
 
             //update enemy waves
             for (var i = 0; i < enemyBullets.Count; i++)
             {
-                var ew1 = enemyBullets[i];
-                var traveledDistance = ew1.GetTraveledDistance(Time);
-                var curDistance = Helper.GetDistance(ew1.StartX, ew1.StartY, X, Y);
-                if (traveledDistance > curDistance + 2 * _radius)
+                if (enemyBullets[i].CheckHit(X, Y, Time, 2 * _radius))
                 {
                     enemyBullets.RemoveAt(i);
                     i--;
                 }
             }
+
             DoSurfing();
         }
 
         private void Fire(ScannedRobotEvent e)
         {
-            // Enemy absolute bearing, you can use your one if you already declare it.
+            // Enemy absolute bearing
             double absBearing = HeadingRadians + e.BearingRadians;
 
-            // find our enemy's location:
+            // enemy's location:
             double ex = X + Math.Sin(absBearing) * e.Distance;
             double ey = Y + Math.Cos(absBearing) * e.Distance;
 
@@ -298,17 +288,20 @@ namespace Leceister
                 return;
             }
 
-            double dangerLeft = CheckDanger(surfWave, -1);
-            double dangerRight = CheckDanger(surfWave, 1);
+            PointF predictPoint1, predictPoint2;
+            double dangerLeft = CheckDanger(surfWave, -1, out predictPoint1);
+            double dangerRight = CheckDanger(surfWave, 1, out predictPoint2);
 
             double goAngle = Helper.GetAbsBearingInRadian(surfWave.StartX, surfWave.StartY, X, Y);
             if (dangerLeft < dangerRight)
             {
                 goAngle = WallSmoothing(X, Y, goAngle - (Math.PI * 0.5), -1);
+                _predictPoint = predictPoint1;
             }
             else
             {
                 goAngle = WallSmoothing(X, Y, goAngle + (Math.PI * 0.5), 1);
+                _predictPoint = predictPoint2;
             }
 
             SetBackAsFront(goAngle);
@@ -343,7 +336,6 @@ namespace Leceister
         {
             double offsetAngle = Helper.GetAbsBearingInRadian(ew.StartX, ew.StartY, targetX, targetY) - ew.TargetAngle;
             double factor = Utils.NormalRelativeAngle(offsetAngle) / ew.MaxEscapeAngleRadian * ew.TargetDirection;
-
             return (int)Helper.Limit(0, 0.5 * (1 + factor) * (StatsCount - 1), StatsCount - 1);
         }
 
@@ -391,6 +383,8 @@ namespace Leceister
             }
         }
 
+        // CREDIT: mini sized predictor from Apollon, by rozu
+        // http://robowiki.net?Apollon
         private PointF PredictPosition(BulletWave surfWave, int direction)
         {
             PointF predictedPosition = new PointF((float)X, (float)Y);
@@ -422,12 +416,11 @@ namespace Leceister
                 // this one is nice ;). if predictedVelocity and moveDir have
                 // different signs you want to breack down
                 // otherwise you want to accelerate (look at the factor "2")
-                predictedVelocity +=
-                    (predictedVelocity * moveDir < 0 ? 2 * moveDir : moveDir);
+                predictedVelocity += (predictedVelocity * moveDir < 0 ? 2 * moveDir : moveDir);
                 predictedVelocity = Helper.Limit(-8, predictedVelocity, 8);
 
                 // calculate the new predicted position
-                predictedPosition = Helper.Project(predictedPosition.X, predictedPosition.Y, predictedHeading, predictedVelocity);
+                predictedPosition = Helper.GetProjection(predictedPosition.X, predictedPosition.Y, predictedHeading, predictedVelocity);
 
                 counter++;
 
@@ -441,16 +434,16 @@ namespace Leceister
             return predictedPosition;
         }
 
-        private double CheckDanger(BulletWave surfWave, int direction)
+        private double CheckDanger(BulletWave surfWave, int direction, out PointF predictPosition)
         {
-            var predictPosition = PredictPosition(surfWave, direction);
+            predictPosition = PredictPosition(surfWave, direction);
             int index = GetFactorIndex(surfWave, predictPosition.X, predictPosition.Y);
             return _surfStats[index];
         }
 
         private double WallSmoothing(double curX, double curY, double angleInRadian, int offsetTurn)
         {
-            while (!_innerField.Contains(Helper.Project(curX, curY, angleInRadian, WallStick)))
+            while (!_innerField.Contains(Helper.GetProjection(curX, curY, angleInRadian, WallStick)))
             {
                 angleInRadian += offsetTurn * 0.1;
             }
@@ -488,7 +481,7 @@ namespace Leceister
 
         public override void OnHitRobot(HitRobotEvent e)
         {
-            _lastEnemyEnergy = e.Energy;
+            _lastEnemyEnergy -= 0.6;
         }
 
         public override void OnBulletHit(BulletHitEvent e)
@@ -546,12 +539,29 @@ namespace Leceister
 
             var pen1 = new Pen(Color.Green);
             var pen2 = new Pen(Color.Red);
+            var pen3 = new Pen(Color.DarkRed);
+            var hitRadius = 5f;
+            var hitRadius2 = 3f;
             //draw waves
             foreach (var ew in enemyBullets)
             {
+
                 var dist = ew.GetTraveledDistance(Time);
                 var pen = ew.Equals(danger) ? pen2 : pen1;
-                g.DrawEllipse(pen, (float)ew.StartX, (float)ew.StartY, (float)dist, (float)dist);
+                g.DrawEllipse(pen, (float)ew.StartX - (float)dist, (float)ew.StartY - (float)dist, 2 * (float)dist, 2 * (float)dist);
+
+                if (ew.Equals(danger))
+                {
+                    g.DrawEllipse(pen3, _predictPoint.X - hitRadius, _predictPoint.Y - hitRadius, 2 * hitRadius, 2 * hitRadius);
+                    g.DrawEllipse(pen3, _predictPoint.X - hitRadius2, _predictPoint.Y - hitRadius2, 2 * hitRadius2, 2 * hitRadius2);
+
+
+                    var length = Helper.GetDistance(ew.StartX, ew.StartY, _predictPoint.X, _predictPoint.Y);
+                    var ratio = dist / length;
+                    var x = (_predictPoint.X - ew.StartX) * ratio + ew.StartX;
+                    var y = (_predictPoint.Y - ew.StartY) * ratio + ew.StartY;
+                    g.DrawLine(pen, (float)ew.StartX, (float)ew.StartY, (float)x, (float)y);
+                }
             }
 
         }

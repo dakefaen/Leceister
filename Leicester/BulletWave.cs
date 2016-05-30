@@ -1,7 +1,8 @@
 ﻿using System;
+using Robocode;
 using Robocode.Util;
 
-namespace Leceister
+namespace Leicester
 {
     public class BulletWave
     {
@@ -9,9 +10,18 @@ namespace Leceister
         public double StartY { get; set; }
         public long FireTime { get; set; }
         public double Power { get; set; }
+        /// <summary>
+        /// in radian
+        /// </summary>
         public double Angle { get; set; }
+        /// <summary>
+        /// in radian
+        /// </summary>
         public double TargetAngle { get; set; }
-        public int TargetDirection { get; set; } //1 is cloclwise; -1 is counter-clockwise
+        /// <summary>
+        /// 1 is cloclwise; -1 is counter-clockwise
+        /// </summary>
+        public int TargetDirection { get; set; }
         public int[] Stats { get; set; }
 
         public BulletWave()
@@ -19,6 +29,7 @@ namespace Leceister
             Angle = Double.NaN;
             TargetAngle = Double.NaN;
             TargetDirection = 1;
+            Stats = null;
         }
 
         public BulletWave(double startX, double startY, long fireTime, double power, double angle, double targetAngle, int targetDirection)
@@ -30,6 +41,7 @@ namespace Leceister
             Angle = angle;
             TargetAngle = targetAngle;
             TargetDirection = targetDirection;
+            Stats = null;
         }
 
         public double GetTraveledDistance(long curTime)
@@ -44,20 +56,23 @@ namespace Leceister
 
         public double MaxEscapeAngleRadian
         {
-            get { return Math.Asin(8.0 / Velocity); }
+            get { return Math.Asin(Rules.MAX_VELOCITY / Velocity); }
         }
 
-        public bool CheckHit(double enemyX, double enemyY, long currentTime)
+        public bool CheckHit(double enemyX, double enemyY, long currentTime, double radius = 0)
         {
             // if the distance from the wave origin to our enemy has passed
             // the distance the bullet would have traveled...
-            if (Helper.GetDistance(StartX, StartY, enemyX, enemyY) <= GetTraveledDistance(currentTime))
+            if (Helper.GetDistance(StartX, StartY, enemyX, enemyY) + radius <= GetTraveledDistance(currentTime))
             {
-                double desiredDirection = Math.Atan2(enemyX - StartX, enemyY - StartY);
-                double angleOffset = Utils.NormalRelativeAngle(desiredDirection - TargetAngle);
-                double guessFactor = Helper.Limit(-1, angleOffset / MaxEscapeAngleRadian, 1) * TargetDirection;
-                int index = (int)Math.Round((Stats.Length - 1) * 0.5 * (guessFactor + 1));
-                Stats[index]++;
+                if (Stats != null)
+                {
+                    double desiredDirection = Math.Atan2(enemyX - StartX, enemyY - StartY);
+                    double angleOffset = Utils.NormalRelativeAngle(desiredDirection - TargetAngle);
+                    double guessFactor = Helper.Limit(-1, angleOffset / MaxEscapeAngleRadian, 1) * TargetDirection;
+                    int index = (int)Math.Round((Stats.Length - 1) * 0.5 * (guessFactor + 1));
+                    Stats[index]++;
+                }
                 return true;
             }
             return false;

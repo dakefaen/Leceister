@@ -2,7 +2,7 @@
 using System.Drawing;
 using Robocode;
 
-namespace Leceister
+namespace Leicester
 {
     public class Helper
     {
@@ -56,7 +56,7 @@ namespace Leceister
             return Math.Atan2(targetX - meX, targetY - meY);
         }
 
-        public static PointF Project(double curX, double curY, double angleInRadian, double distance)
+        public static PointF GetProjection(double curX, double curY, double angleInRadian, double distance)
         {
             return new PointF((float)(curX + Math.Sin(angleInRadian) * distance), (float)(curY + Math.Cos(angleInRadian) * distance));
         }

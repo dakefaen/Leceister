@@ -6,3 +6,6 @@
 /Leceister/bin/Debug
 /Leceister/obj/Debug
 *.user
+/Leicester/bin/Debug
+/Leicester/obj/Debug
+*.suo

@@ -7,8 +7,8 @@
     <ProjectGuid>{5D9548DD-403A-4CB3-879D-5FD272E5ADE4}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>Leceister</RootNamespace>
-    <AssemblyName>Leceister</AssemblyName>
+    <RootNamespace>Leicester</RootNamespace>
+    <AssemblyName>Leicester</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
   </PropertyGroup>
