@@ -60,6 +60,20 @@ namespace Leicester
         {
             return new PointF((float)(curX + Math.Sin(angleInRadian) * distance), (float)(curY + Math.Cos(angleInRadian) * distance));
         }
+
+        public static void UpdateStats(int index, double[] statsArray)
+        {
+            //            statsArray[index] += 1.0;
+
+            for (int i = 0; i < statsArray.Length; i++)
+            {
+                // for the spot bin that we were hit on, add 1;
+                // for the bins next to it, add 1 / 2;
+                // the next one, add 1 / 5; and so on...
+                //                statsArray[i] += 1.0 / (Math.Pow(index - i, 2) + 1);
+                statsArray[i] += 1.0 / Math.Pow(2, Math.Abs(index - i));
+            }
+        }
     }
 
 

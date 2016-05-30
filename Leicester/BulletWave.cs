@@ -22,7 +22,7 @@ namespace Leicester
         /// 1 is cloclwise; -1 is counter-clockwise
         /// </summary>
         public int TargetDirection { get; set; }
-        public int[] Stats { get; set; }
+        public double[] Stats { get; set; }
 
         public BulletWave()
         {
@@ -71,7 +71,7 @@ namespace Leicester
                     double angleOffset = Utils.NormalRelativeAngle(desiredDirection - TargetAngle);
                     double guessFactor = Helper.Limit(-1, angleOffset / MaxEscapeAngleRadian, 1) * TargetDirection;
                     int index = (int)Math.Round((Stats.Length - 1) * 0.5 * (guessFactor + 1));
-                    Stats[index]++;
+                    Helper.UpdateStats(index, Stats);
                 }
                 return true;
             }

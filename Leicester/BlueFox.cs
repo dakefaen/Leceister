@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using Robocode;
 using Robocode.Util;
 
@@ -10,7 +11,9 @@ namespace Leicester
     {
         private const float WallStick = 160;
         private const double radarLockFactor = 2.0;
-        private const int StatsCount = 33;
+        private const int StatsCount = 63;
+        private const int DistanceIndexCount = 13;
+        private const int SafeDistance = 300;
 
         private double randomTurn = 90;
         private int randomDirection = 1;
@@ -29,24 +32,31 @@ namespace Leicester
         private List<BulletWave> virtualBullets = new List<BulletWave>();
 
         public double[] _surfStats = new double[StatsCount];
-        public int[] _fireStats = new int[StatsCount];
+        public double[][] _fireStats = new double[DistanceIndexCount][];
 
         private PointF _lastEnemyLocation;
         private double _lastEnemyEnergy = 100d;
-//        private double _enemyGunHeat = 0;
+        //        private double _enemyGunHeat = 0;
 
         private PointF _predictPoint = new PointF(0, 0);
         //        private PointF _lastHitEnemyPoint = new PointF(0, 0);
 
         public override void Run()
         {
-            SetColors(Color.RoyalBlue, Color.RoyalBlue, Color.DarkGoldenrod, Color.Yellow, Color.LightGoldenrodYellow);
+            SetColors(Color.RoyalBlue, Color.Blue, Color.Gold, Color.Yellow, Color.Yellow);
 
             IsAdjustGunForRobotTurn = true;
             IsAdjustRadarForGunTurn = true;
 
             _radius = (float)(Math.Max(Width, Height) / 1.41421);
             _innerField = new RectangleF(_radius, _radius, (float)BattleFieldWidth - 2 * _radius, (float)BattleFieldHeight - 2 * _radius);
+
+
+            for (int i = 0; i < _fireStats.Length; i++)
+            {
+                _fireStats[i] = new double[StatsCount];
+            }
+
 
             //initial radar scan
             SetTurnRadarRight(double.MaxValue);
@@ -60,30 +70,26 @@ namespace Leicester
                 Scan();
                 if (_radarCount == 0)
                 {
+                    //                Out.WriteLine("lose radar lock: "+Time);
                     WalkWhenLoseRadar();
                 }
-                else
-                {
-                    _radarCount--;
-                }
+
                 Execute();
             }
         }
 
-        //todo: run away
         private void WalkWhenLoseRadar()
         {
-            randomDirection = Math.Sign(rnd.Next(-1, 1));
-            randomTurn = rnd.Next(0, 20) * randomDirection;
-            SetTurnRight(randomTurn);
-            SetAhead(200);
-
+            SetTurnAwayFromWall();
+            SetAhead(rnd.Next(50, 150));
             SetTurnRadarRight(double.MaxValue);
         }
 
         public override void OnScannedRobot(ScannedRobotEvent e)
         {
-            _radarCount++;
+            //            Out.WriteLine("found enemy " + Time);
+            if (_radarCount < 3)
+                _radarCount++;
 
             //lock radar
             double radarTurn = Utils.NormalRelativeAngle(HeadingRadians + e.BearingRadians - RadarHeadingRadians);
@@ -209,7 +215,8 @@ namespace Leicester
                 else
                     enemyDirection = 1;
             }
-            int[] currentStats = _fireStats; // This seems silly, but I'm using it to // show something else later
+            var distanceIndex = (int)(e.Distance / 100);
+            double[] currentStats = _fireStats[distanceIndex];
             var newWave = new BulletWave()
             {
                 StartX = X,
@@ -221,7 +228,7 @@ namespace Leicester
                 Stats = currentStats
             };
 
-            double angleOffset = enemyDirection * newWave.MaxEscapeAngleRadian * GetGuessfactor();
+            double angleOffset = enemyDirection * newWave.MaxEscapeAngleRadian * GetGuessfactor(currentStats);
 
             //handle easy case
             if (e.Energy < 0.1)
@@ -253,38 +260,37 @@ namespace Leicester
             }
         }
 
-        private double GetGuessfactor()
+        private double GetGuessfactor(double[] fireStats)
         {
             int bestindex = (StatsCount + 1) / 2; // initialize it to be in the middle, guessfactor 0.
             for (int i = 0; i < StatsCount; i++)
-                if (_fireStats[bestindex] < _fireStats[i])
+                if (fireStats[bestindex] < fireStats[i])
                     bestindex = i;
 
             // this should do the opposite of the math in the WaveBullet:
-            return (double)(bestindex - (_fireStats.Length - 1) / 2) / ((_fireStats.Length - 1) / 2);
-        }
-
-        private double GuessAimingFactor(double v, double vLateral)
-        {
-            return Math.Pow(Math.Abs(vLateral) / Rules.MAX_VELOCITY, 1d);
+            return (double)(bestindex - (fireStats.Length - 1) / 2) / ((fireStats.Length - 1) / 2);
         }
 
         private double GetBulletPower(ScannedRobotEvent e)
         {
-            if (e.Distance <= 3 * _radius)
+            if (e.Distance <= 4 * _radius)
                 return 3d;
             if (e.Distance <= 6 * _radius)
-                return 1d;
-            return 0.1d;
+                return 2d;
+            return Helper.Limit(0.1, 0.1d * rnd.Next(1, 10), Energy * 0.1);
         }
 
         private void DoSurfing()
         {
-            BulletWave surfWave = GetMostDangerousWave();
+            BulletWave surfWave = GetClosestBullet();
 
             if (surfWave == null)
             {
-                //todo: do random walk
+                if (!WalkAwayFromEnemy())
+                {
+                    SetTurnAwayFromWall();
+                    SetAhead(rnd.Next(50, 150));
+                }
                 return;
             }
 
@@ -296,30 +302,76 @@ namespace Leicester
             if (dangerLeft < dangerRight)
             {
                 goAngle = WallSmoothing(X, Y, goAngle - (Math.PI * 0.5), -1);
-                _predictPoint = predictPoint1;
+                _predictPoint = predictPoint2;
             }
             else
             {
                 goAngle = WallSmoothing(X, Y, goAngle + (Math.PI * 0.5), 1);
-                _predictPoint = predictPoint2;
+                _predictPoint = predictPoint1;
             }
 
-            SetBackAsFront(goAngle);
+            SetBackAsFront(goAngle, rnd.Next(50, 150));
+        }
+
+        private void SetTurnAwayFromWall()
+        {
+            int i = 0;
+            if (Y < 2 * _radius)
+                i += 1;
+            else if (Y > BattleFieldHeight - 2 * _radius)
+                i += 2;
+            if (X < 2 * _radius)
+                i += 4;
+            if (X > BattleFieldWidth - 2 * _radius)
+                i += 7;
+            double[] radians = { -1, 0, Math.PI, -1, Math.PI / 2, Math.PI / 4, Math.PI * 3 / 4, Math.PI * 3 / 2,
+                Math.PI * 7 / 4, Math.PI * 5 / 4 };
+            if (radians[i] < 0) return;
+
+            double heading = radians[i] + Utils.ToRadians(rnd.Next(-20, 20));
+            double bearing = Utils.NormalRelativeAngle(heading - HeadingRadians);
+            SetTurnRightRadians(bearing);
+        }
+
+        private bool WalkAwayFromEnemy()
+        {
+            var distance = Helper.GetDistance(X, Y, _lastEnemyLocation.X, _lastEnemyLocation.Y);
+            if (distance < SafeDistance)
+            {
+                double goAngle = HeadingRadians;
+                var bearing = Utils.NormalRelativeAngle(Helper.GetAbsBearingInRadian(X, Y, _lastEnemyLocation.X, _lastEnemyLocation.Y) - HeadingRadians);
+                if (Math.Abs(bearing) < Math.PI * 0.5)
+                {
+                    if (bearing > 0)
+                        goAngle = HeadingRadians + bearing - Math.PI * 0.5;
+                    else
+                        goAngle = HeadingRadians + bearing + Math.PI * 0.5;
+                }
+
+                goAngle = WallSmoothing(X, Y, goAngle, _surfDirections[0]);
+                SetBackAsFront(goAngle, SafeDistance - distance);
+
+                return true;
+            }
+            return false;
+        }
+
+
+        private BulletWave GetMostDangerousBullet()
+        {
+            return enemyBullets.Select(e => new Tuple<BulletWave, double>(e, CalculateDistanceToBullet(e)))
+                    .OrderByDescending(t => t.Item2).First().Item1;
         }
 
         //todo: get most dangerous wave
-        private BulletWave GetMostDangerousWave()
+        private BulletWave GetClosestBullet()
         {
             double closestDistance = double.MaxValue;
             BulletWave surfWave = null;
 
             foreach (var ew in enemyBullets)
             {
-                var traveledDistance = ew.GetTraveledDistance(Time);
-                var curDistance = Helper.GetDistance(ew.StartX, ew.StartY, X, Y);
-
-                double distance = curDistance - traveledDistance;
-
+                var distance = CalculateDistanceToBullet(ew);
                 if (distance > ew.Velocity && distance < closestDistance)
                 {
                     surfWave = ew;
@@ -328,6 +380,13 @@ namespace Leicester
             }
 
             return surfWave;
+        }
+
+        private double CalculateDistanceToBullet(BulletWave ew)
+        {
+            var traveledDistance = ew.GetTraveledDistance(Time);
+            var curDistance = Helper.GetDistance(ew.StartX, ew.StartY, X, Y);
+            return curDistance - traveledDistance;
         }
 
         // Given the EnemyWave that the bullet was on, and the point where we
@@ -344,17 +403,10 @@ namespace Leicester
         private void LogHit(BulletWave ew, double targetX, double targetY)
         {
             int index = GetFactorIndex(ew, targetX, targetY);
-
-            for (int i = 0; i < StatsCount; i++)
-            {
-                // for the spot bin that we were hit on, add 1;
-                // for the bins next to it, add 1 / 2;
-                // the next one, add 1 / 5; and so on...
-                _surfStats[i] += 1.0 / (Math.Pow(index - i, 2) + 1);
-            }
+            Helper.UpdateStats(index, _surfStats);
         }
 
-        private void SetBackAsFront(double angleInRadian)
+        private void SetBackAsFront(double angleInRadian, double distance)
         {
             double turn = Utils.NormalRelativeAngle(angleInRadian - HeadingRadians);
             if (Math.Abs(turn) > (Math.PI / 2))
@@ -367,7 +419,7 @@ namespace Leicester
                 {
                     SetTurnLeftRadians(Math.PI - turn);
                 }
-                SetBack(100);
+                SetBack(distance);
             }
             else
             {
@@ -379,7 +431,7 @@ namespace Leicester
                 {
                     SetTurnRightRadians(turn);
                 }
-                SetAhead(100);
+                SetAhead(distance);
             }
         }
 
@@ -424,7 +476,7 @@ namespace Leicester
 
                 counter++;
 
-                if (Helper.GetDistance(predictedPosition.X, predictedPosition.Y, surfWave.StartX, surfWave.StartY) <
+                if (Helper.GetDistance(predictedPosition.X, predictedPosition.Y, surfWave.StartX, surfWave.StartY) + _radius <
                     surfWave.GetTraveledDistance(Time) + (counter + 1) * surfWave.Velocity)
                 {
                     intercepted = true;
@@ -452,8 +504,15 @@ namespace Leicester
 
         public override void OnWin(WinEvent evnt)
         {
-            SetColors(Color.Gold, Color.Gold, Color.Gold, Color.Gold, Color.Gold);
-            TurnRadarRight(double.MaxValue);
+            while (true)
+            {
+                ScanColor = Color.Black;
+                TurnRadarLeft(45);
+                Scan();
+                ScanColor = Color.White;
+                TurnRadarRight(45);
+                Scan();
+            }
         }
 
         public override void OnHitByBullet(HitByBulletEvent e)
@@ -494,7 +553,6 @@ namespace Leicester
                     Math.Abs(e.Bullet.Power - bullet.Power) < 0.001 && Math.Abs(e.Bullet.HeadingRadians - bullet.Angle) < 0.001)
                 {
                     bullet.CheckHit(e.Bullet.X, e.Bullet.Y, Time); //maybe add more weight
-                                                                   //                    Out.WriteLine("angle: {0}, bearing: {1}", bullet.Angle, bullet.TargetAngle);
                     break;
                 }
             }
@@ -527,15 +585,23 @@ namespace Leicester
                     Math.Abs(e.HitBullet.Power - bullet.Power) < 0.001 && Math.Abs(e.Bullet.HeadingRadians - bullet.Angle) < 0.001)
                 {
                     bullet.CheckHit(e.HitBullet.X, e.HitBullet.Y, Time); //maybe add more weight
-                                                                         //                    Out.WriteLine("angle: {0}, bearing: {1}", bullet.Angle, bullet.TargetAngle);
                     break;
                 }
             }
         }
 
+        public override void OnStatus(StatusEvent e)
+        {
+            if (Time > 10 && _radarCount > 0)
+                _radarCount--;
+            //            Out.WriteLine("status:" + Time);
+        }
+
         public override void OnPaint(IGraphics g)
         {
-            var danger = GetMostDangerousWave();
+            if (!enemyBullets.Any()) return;
+
+            var danger = GetClosestBullet();
 
             var pen1 = new Pen(Color.Green);
             var pen2 = new Pen(Color.Red);
