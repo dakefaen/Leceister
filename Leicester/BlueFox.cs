@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using Robocode;
 using Robocode.Util;
@@ -14,6 +15,7 @@ namespace Leicester
         private const int StatsCount = 63;
         private const int DistanceIndexCount = 13;
         private const int SafeDistance = 300;
+        private const string FileName = "Stats.txt";
 
         private double randomTurn = 90;
         private int randomDirection = 1;
@@ -41,6 +43,16 @@ namespace Leicester
         private PointF _predictPoint = new PointF(0, 0);
         //        private PointF _lastHitEnemyPoint = new PointF(0, 0);
 
+        private static int medKitTurnPast = 0;
+        private bool medKitAppeared = false;
+        private bool medKitLocked = false;
+        private PointF _lastMedPoint = new PointF(0, 0);
+        private double medEnergy = 5;
+
+        private static int round = 1;
+        //        private bool hasScanedMed = false;
+        //        private long startMedScanTime = 0;
+
         public override void Run()
         {
             SetColors(Color.RoyalBlue, Color.Blue, Color.Gold, Color.Yellow, Color.Yellow);
@@ -57,7 +69,6 @@ namespace Leicester
                 _fireStats[i] = new double[StatsCount];
             }
 
-
             //initial radar scan
             SetTurnRadarRight(double.MaxValue);
 
@@ -65,16 +76,39 @@ namespace Leicester
             rnd = new Random(DateTime.Now.Second);
             rnd = new Random(DateTime.Now.Millisecond * rnd.Next(DateTime.Now.Second) + 1);
 
+            //ReadStats();
+            //ReadRound();
+
             while (true)
             {
+                Out.WriteLine(Time + "\t" + medKitTurnPast);
+                if (round == 1 && medKitTurnPast % 500 == 0)
+                //                    || (round > 1 && medKitTurnPast % 50 == 0))
+                {
+                    medKitAppeared = true;
+                    medKitLocked = false;
+                }
+
                 Scan();
                 if (_radarCount == 0)
                 {
                     //                Out.WriteLine("lose radar lock: "+Time);
                     WalkWhenLoseRadar();
+                    SetTurnRadarRight(double.MaxValue);
                 }
 
+                if (medKitAppeared && !medKitLocked)
+                {
+                    //                    Out.WriteLine("start scan med kit " + Time + "\t" + medKitTurnPast);
+                    SetTurnRadarRight(double.MaxValue);
+                    //                    if (!hasScanedMed)
+                    //                        startMedScanTime = Time;
+                }
+
+
                 Execute();
+
+                medKitTurnPast += 2;
             }
         }
 
@@ -82,18 +116,25 @@ namespace Leicester
         {
             SetTurnAwayFromWall();
             SetAhead(rnd.Next(50, 150));
-            SetTurnRadarRight(double.MaxValue);
         }
 
         public override void OnScannedRobot(ScannedRobotEvent e)
         {
-            //            Out.WriteLine("found enemy " + Time);
+            Out.WriteLine("found enemy " + Time + "\t" + medKitTurnPast);
             if (_radarCount < 3)
                 _radarCount++;
 
-            //lock radar
-            double radarTurn = Utils.NormalRelativeAngle(HeadingRadians + e.BearingRadians - RadarHeadingRadians);
-            SetTurnRadarRightRadians(radarTurn * radarLockFactor);
+            if (medKitAppeared && !medKitLocked)
+            {
+                //                Out.WriteLine("start scan med kit " + Time + "\t" + medKitTurnPast);
+                SetTurnRadarRight(double.MaxValue);
+            }
+            else
+            {
+                //lock radar
+                double radarTurn = Utils.NormalRelativeAngle(HeadingRadians + e.BearingRadians - RadarHeadingRadians);
+                SetTurnRadarRightRadians(radarTurn * radarLockFactor);
+            }
 
             #region old
             //var p = GetBulletPower();
@@ -132,11 +173,81 @@ namespace Leicester
                         SetAhead(400);
 */
             #endregion
-            SurfWave(e);
+
+            UpdateEnemyWave(e);
+            if (medKitLocked && Energy - _lastEnemyEnergy < medEnergy)
+            {
+                var maxV = rnd.Next(6, 8);
+                MaxVelocity = maxV;
+                GoToMed();
+                //FireOnTheWayToMedKit(e);
+            }
+            else
+            {
+                MaxVelocity = Rules.MAX_VELOCITY;
+                DoSurfing();
+            }
             Fire(e);
         }
 
-        private void SurfWave(ScannedRobotEvent e)
+        private void FireOnTheWayToMedKit(ScannedRobotEvent e)
+        {
+            var ev = 8;
+            var power = GetBulletPower(e);
+
+            var absBearing = e.BearingRadians + HeadingRadians;
+
+            _lastEnemyEnergy = e.Energy;
+            var enemyLocation = Helper.GetProjection(X, Y, absBearing, e.Distance);
+
+
+            var distToMed = Helper.GetDistance(X, Y, _lastMedPoint.X, _lastMedPoint.Y);
+            var distFromEnemyToMed = Helper.GetDistance(enemyLocation.X, enemyLocation.Y, _lastMedPoint.X, _lastMedPoint.Y);
+
+            var lam = Helper.GetAbsBearingInRadian(X, Y, _lastMedPoint.X, _lastMedPoint.Y) -
+                      Helper.GetAbsBearingInRadian(X, Y, enemyLocation.X, enemyLocation.Y);
+            var sinB = distToMed / Math.Max(0.0001, distFromEnemyToMed) * Math.Sin(lam);
+
+            var sinA = ev / Helper.GetBulletVelocity(power) * sinB;
+
+            var gunAdjust = absBearing + Math.Asin(sinA) - GunHeadingRadians;
+            SetTurnGunRightRadians(gunAdjust);
+
+            if (GunHeat <= 0 && gunAdjust < Math.Atan2(0.5 * _radius, e.Distance))
+            {
+                var fireBullet = SetFireBullet(power);
+            }
+        }
+
+        private void GoToMed()
+        {
+            var bearing = Helper.GetAbsBearingInRadian(X, Y, _lastMedPoint.X, _lastMedPoint.Y);
+            var dist = Helper.GetDistance(X, Y, _lastMedPoint.X, _lastMedPoint.Y);
+
+            SetBackAsFront(bearing, dist);
+        }
+
+        public override void OnScannedMedicalKit(ScannedMedicalKitEvent e)
+        {
+            medKitAppeared = true;
+            var absBearing = HeadingRadians + e.BearingRadians;
+            _lastMedPoint = Helper.GetProjection(X, Y, absBearing, e.Distance);
+            medEnergy = e.HealEnergy;
+            medKitLocked = true;
+//            hasScanedMed = true;
+            //            Out.WriteLine("Time : {0} \t medturn: {1}", Time, medKitTurnPast);
+        }
+
+        public override void OnFetchMedicalKit(FetchedMedicalKitEvent evnt)
+        {
+            Out.WriteLine("eat!!! Time : {0} \t medturn: {1}", Time, medKitTurnPast);
+
+            medKitAppeared = false;
+            medKitLocked = false;
+//            hasScanedMed = true;
+        }
+
+        private void UpdateEnemyWave(ScannedRobotEvent e)
         {
             var lateralVelocity = Velocity * Math.Sin(e.BearingRadians);
             var absBearing = e.BearingRadians + HeadingRadians;
@@ -170,8 +281,6 @@ namespace Leicester
                     i--;
                 }
             }
-
-            DoSurfing();
         }
 
         private void Fire(ScannedRobotEvent e)
@@ -356,7 +465,6 @@ namespace Leicester
             return false;
         }
 
-
         private BulletWave GetMostDangerousBullet()
         {
             return enemyBullets.Select(e => new Tuple<BulletWave, double>(e, CalculateDistanceToBullet(e)))
@@ -476,6 +584,7 @@ namespace Leicester
 
                 counter++;
 
+                //todo: check if we can add _radius
                 if (Helper.GetDistance(predictedPosition.X, predictedPosition.Y, surfWave.StartX, surfWave.StartY) + _radius <
                     surfWave.GetTraveledDistance(Time) + (counter + 1) * surfWave.Velocity)
                 {
@@ -536,6 +645,11 @@ namespace Leicester
                 LogHit(hitWave, e.Bullet.X, e.Bullet.Y);
                 enemyBullets.Remove(hitWave);
             }
+
+            if (medKitLocked)
+            {
+                SetBackAsFront(HeadingRadians + Math.PI, rnd.Next(50, 100));
+            }
         }
 
         public override void OnHitRobot(HitRobotEvent e)
@@ -594,9 +708,146 @@ namespace Leicester
         {
             if (Time > 10 && _radarCount > 0)
                 _radarCount--;
-            //            Out.WriteLine("status:" + Time);
+
+            //            if (medKitTurnPast % 500 == 0)
+            //            {
+            //                Out.WriteLine("status:" + Time);
+            //                medKitTurnPast = 0;
+            //                medKitAppeared = true;
+            //                medKitLocked = false;
+            //            }
+
+            //medKitTurnPast++;
         }
 
+        public override void OnRoundEnded(RoundEndedEvent evnt)
+        {
+            round++;
+            //            Out.WriteLine("The round has ended");
+
+            //WriteRound();
+            //WriteStats();
+        }
+
+        public override void OnBattleEnded(BattleEndedEvent evnt)
+        {
+            medKitTurnPast = 0;
+            //WriteRound();
+        }
+
+        private void WriteStats()
+        {
+            try
+            {
+                using (var writer = new StreamWriter(GetDataFile(FileName)))
+                {
+                    foreach (var stat in _surfStats)
+                    {
+                        writer.Write(stat + " ");
+                    }
+
+                    foreach (var stats in _fireStats)
+                    {
+                        writer.WriteLine();
+                        foreach (var stat in stats)
+                        {
+                            writer.Write(stat + " ");
+                        }
+                    }
+                }
+
+            }
+            catch (Exception)
+            {
+                Out.WriteLine("exception in writing");
+            }
+        }
+
+        private void ReadStats()
+        {
+            var surfStats = new double[StatsCount];
+            var fireStats = new double[DistanceIndexCount][];
+            for (int i = 0; i < fireStats.Length; i++)
+            {
+                fireStats[i] = new double[StatsCount];
+            }
+
+            try
+            {
+                bool isSurf = true;
+                int j = 0;
+                using (var reader = new StreamReader(GetDataFile(FileName)))
+                {
+                    while (!reader.EndOfStream)
+                    {
+                        var line = reader.ReadLine().Trim();
+                        if (!string.IsNullOrEmpty(line))
+                        {
+                            var stats = line.Split(' ');
+
+                            if (isSurf)
+                            {
+                                isSurf = false;
+                                for (int i = 0; i < stats.Length; i++)
+                                {
+                                    surfStats[i] = double.Parse(stats[i]);
+                                }
+                            }
+                            else
+                            {
+                                for (int i = 0; i < stats.Length; i++)
+                                {
+                                    fireStats[j][i] = double.Parse(stats[i]);
+                                }
+                                j++;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                Out.WriteLine("exception in reading");
+                return;
+            }
+
+            _fireStats = fireStats;
+            _surfStats = surfStats;
+        }
+
+        //        private void ReadRound()
+        //        {
+        //            try
+        //            {
+        //                using (var reader = new StreamReader(GetDataFile(FileName)))
+        //                {
+        //                    var str = reader.ReadLine();
+        //                    if (!string.IsNullOrEmpty(str))
+        //                    {
+        //                        medKitTurnPast = int.Parse(str);
+        //                    }
+        //                }
+        //            }
+        //            catch (Exception)
+        //            {
+        //                Out.WriteLine("exception in reading");
+        //            }
+        //        }
+        //
+        //        private void WriteRound()
+        //        {
+        //            try
+        //            {
+        //                using (var writer = new StreamWriter(GetDataFile(FileName)))
+        //                {
+        //                    writer.Write(medKitTurnPast);
+        //                }
+        //            }
+        //            catch (Exception)
+        //            {
+        //                Out.WriteLine("exception in writing");
+        //            }
+        //        }
         public override void OnPaint(IGraphics g)
         {
             if (!enemyBullets.Any()) return;
